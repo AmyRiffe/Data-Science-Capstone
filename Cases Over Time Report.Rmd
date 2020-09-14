@@ -1,0 +1,361 @@
+---
+title: "COVID19 Investigation"
+author: "Amy Riffe"
+date: "9/8/2020"
+output:
+  word_document: default
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+if(!require(caret)) install.packages("caret", repos = "http://cran.us.r-project.org")
+if(!require(data.table)) install.packages("data.table", repos = "http://cran.us.r-project.org")
+if(!require(ggplot2)) install.packages("tidyverse", repos = "http://cran.us.r-project.org")
+if(!require(magrittr)) install.packages("caret", repos = "http://cran.us.r-project.org")
+if(!require(dplyr)) install.packages("data.table", repos = "http://cran.us.r-project.org")
+if(!require(oddsratio)) install.packages("tidyverse", repos = "http://cran.us.r-project.org")
+
+
+library(ggplot2)
+library(magrittr)
+library(dplyr)
+library(caret)
+library(oddsratio)
+```
+
+# Introduction
+
+The year 2020 began with concerns over a newly emerging disease named Novel Corona Virus, or COVID19. Since this was a new disease, there was little information about its virulity and ability to spread. As the year continued, the spread of this virus became pandemic affecting countries all over the world. Insights about the virus came through collection of case information and evaluation of case investigations. Those insights inform the community about the health risks, offer opportunities for improved treatments, and provide direction for policy makers looking to mitigate the spread and effects of the disease. 
+
+For the purpose of the HarvardX Data Science PH125.9x course capstone, a local data file with information about COVID19 cases was obtained. The data file was de-identified for use in the course. There are many cases, but fewer are hospitalized because of the disease. The object of this capstone is to look at the case data and identify predictors for hospitalization. 
+
+# Analysis
+
+Two .csv data files were used during this project. One contained aggregate case counts over time and the other contained some information about each case. R version 3.6.1 was used for data analysis. Some general cleaning of the data files were done. Descriptive statistics in the manner of tables and charts were done to understand the data better. The data file with individual case information was used for inferential statistics. Both a linear regression model and a logistic regression model were developed to compare which model better predicted if a case would be hospitalized. 
+
+The data files were read into R from GitHub. 
+
+```{r}
+urlfile<-"https://raw.githubusercontent.com/AmyRiffe/Data-Science-Capstone/master/Cases_Over_Time.csv"
+cases<-read.csv(urlfile)
+
+urlfile<-"https://raw.githubusercontent.com/AmyRiffe/Data-Science-Capstone/master/case_list.csv"
+caselist<-read.csv(urlfile)
+```
+
+The 'cases' file was examined and some descriptive information was identified. To see what the data file looked like, the first six lines were printed.
+```{r}
+head(cases)
+```
+
+Some additional information about the case file came from looking at the structure. The first variable was the date when a case was reported to the local health department. It was a factor variable instead of a date variable. It was left as such since it wasn't used in analysis. The Cases variable was the number of cases reported on that date. The Day.number variable was the number of days from the original case in the geography, which was March 14, 2020. 
+```{r}
+str(cases)
+```
+
+Number of days in the file?
+```{r, echo=FALSE}
+max(cases$Day.number)
+```
+
+The smallest and largest number of cases on a day were:
+
+```{r, echo=FALSE}
+min(cases$Cases)
+max(cases$Cases)
+```
+
+### Number of cases by day.
+```{r, echo=FALSE}
+cases%>% ggplot(aes(Day.number, Cases))+
+  geom_point(color="blue")
+```
+
+There has clearly been an increase in cases over time. 
+
+### Number of cases by day.
+``` {r, echo=FALSE}
+cases%>% ggplot(aes(Day.number, Cases))+
+  geom_line()
+```
+
+The daily line chart is much too jagged to provide information beyond a general increase over time. It is hard to tell how much the high counts impact the trend? 
+
+The next chart was done using a locally weighted smoothed line (LOESS). This takes smaller windows of data and plots a trend, then continues for the next window. It builds a smoother trend based on those window trends. 
+
+```{r, eval=FALSE}
+cases%>% ggplot(aes(Day.number, Cases))+
+  geom_point(color="blue")+
+  geom_smooth(color="green", span=.1, method.args=list(degree=1))
+```
+### Number of cases by day, Smoothed using LOESS.
+```{r, echo=FALSE}
+cases%>% ggplot(aes(Day.number, Cases))+
+  geom_point(color="blue")+
+  geom_smooth(color="green", span=.1, method.args=list(degree=1))
+```
+
+The LOESS trend shows that the days with really high counts don't affect the trend as much when smoothed with days around them. It appears the trend is beginning to level out again, but at a higher count than seen earlier in the year. Memorial day was on day 72 where there begins to be an increase. The fourth of July was on day 112, where the counts continue to rise. Where the counts begin to level off again is mid-August. 
+
+The caselist data file was used to analyze the association of case factors to cases being hospitalized. Some data cleaning was done to correct for misspellings in data, and the like. Once clean, charts were made to look at the demographic splits. 
+
+```{r, echo=FALSE}
+#rename variable
+names(caselist)[1]<-"Age"
+
+#look at the variables
+
+#recode into better categories
+caselist$Hospitalized.for.COVID[caselist$Hospitalized.for.COVID=="No"]<-"no"
+caselist$Hospitalized.for.COVID[caselist$Hospitalized.for.COVID==""]<-"no"
+caselist$Hospitalized.for.COVID[caselist$Hospitalized.for.COVID=="pending"]<-"no"
+caselist$Hospitalized.for.COVID[caselist$Hospitalized.for.COVID=="Pending"]<-"no"
+caselist$Hospitalized.for.COVID[caselist$Hospitalized.for.COVID=="Yes"]<-"yes"
+
+#drop unused factors after recode
+caselist$Hospitalized.for.COVID<-(droplevels(caselist$Hospitalized.for.COVID))
+
+
+#recode race
+caselist$Race[caselist$Race==""]<-"unknown"
+caselist$Race[caselist$Race=="Black"]<-"black"
+caselist$Race[caselist$Race=="Other"]<-"unknown"
+caselist$Race[caselist$Race=="other"]<-"unknown"
+caselist$Race[caselist$Race=="pending"]<-"unknown"
+caselist$Race[caselist$Race=="Pending"]<-"unknown"
+caselist$Race[caselist$Race=="Unknown"]<-"unknown"
+caselist$Race[caselist$Race=="White"]<-"white"
+caselist$Race[caselist$Race=="hispanic/LatinX"]<-"Hispanic/LatinX"
+
+#change order of race factor so white is the reference group
+caselist$Race<-relevel(caselist$Race, "white")
+
+#drop unused factors after recode
+caselist$Race<-(droplevels(caselist$Race))
+
+
+#recode Gender
+caselist$Gender[caselist$Gender=="f"]<-"F"
+caselist$Gender[caselist$Gender==""]<-NA
+
+#drop unused factors after recode
+caselist$Gender<-(droplevels(caselist$Gender))
+
+```
+```{r}
+str(caselist)
+```
+
+```{r, echo=FALSE}
+caselist%>% filter(!is.na(Gender))%>%
+  ggplot(aes(Gender))+
+  geom_bar()
+
+caselist%>%
+  ggplot(aes(Age))+
+  geom_bar()
+
+caselist%>%
+  ggplot(aes(x=forcats::fct_infreq(Race)))+
+  geom_bar()
+```
+
+### The outcome variable is whether a case was hospitalized. 
+Out of the 5,484 cases, there were the following number of cases that were hospitalized.
+```{r, echo=FALSE}
+table(caselist$Hospitalized.for.COVID)[2]
+```
+And the percent of cases that were hospitalized was the following.
+```{r, echo=FALSE}
+table(caselist$Hospitalized.for.COVID)[2]/nrow(caselist)*100
+```
+
+Demographics for hospitalized cases looked like the following. 
+
+```{r, echo=FALSE}
+caselist%>% filter(!is.na(Gender)& Hospitalized.for.COVID=="yes")%>%
+  ggplot(aes(Gender))+
+  geom_bar()
+
+caselist%>%filter(Hospitalized.for.COVID=="yes")%>%
+  ggplot(aes(Age))+
+  geom_bar()
+
+caselist%>%filter(Hospitalized.for.COVID=="yes")%>%
+  ggplot(aes(x=forcats::fct_infreq(Race)))+
+  geom_bar()
+```
+
+There were some differences between all cases and hospitalized cases. More males were hospitalized. More older adults were hospitalized where as there were more younger adults among all cases. The racial distribution looked similar, excepting for fewer unknown race among hospitalizations. 
+
+The caselist data file was split into a training set and test set using the createDataPartition function of the caret package. The file was split into two files with a 50% partition. This level was chosen because the number of hospitalizations is few compared to the number of cases. This would ensure enough hospitalized cases were in both the training and the test sets for analysis to happen. 
+
+```{r}
+set.seed(1)
+test_index <- createDataPartition(y=caselist$Hospitalized.for.COVID, times = 1, p = 0.5, list = FALSE)
+train_cases <- caselist%>% slice(-test_index)
+test_cases <- caselist%>% slice(test_index)
+```
+
+### Model 1
+The first model used for predicting hospitalization was a linear regression mode. This is the most basic model to start with. All were used regardless of the correlation as they are socially important to adjust for in a model. The outcome variable is hospitalized = yes and the predictive or independent variables were age, gender, race, and day number. All were used regardless of correlation as they are socially important to adjust for in a model.
+```{r}
+lm_fit <- mutate(train_cases, y = as.numeric(Hospitalized.for.COVID == "yes")) %>% lm(y ~ Age+Gender+Race+DayNumber, data = .)
+p_hat <- predict(lm_fit, test_cases)
+cutoff<-seq(p_hat[which.min(p_hat)], p_hat[which.max(p_hat)], 0.05)
+```
+A linear regression model was fitted on the training set, then was used to predict the outcome on the test set. Cutoffs for determining accuracy were between the minimum predictive value and the maximum predictive value in increments of 0.05. They were:
+-0.12
+-0.08
+-0.03
+0.02
+0.07
+0.12
+0.17
+0.22
+0.27
+0.32
+0.37
+
+After testing each cutoff, the one with the best accuracy was 0.37 with an accuracy of 0.9375. 
+```{r, echo=FALSE}
+y_hat1 <- ifelse(p_hat > -0.12, "yes", "no") %>% factor()
+y_hat2 <- ifelse(p_hat > -0.08, "yes", "no") %>% factor()
+y_hat3 <- ifelse(p_hat > -0.03, "yes", "no") %>% factor()
+y_hat4 <- ifelse(p_hat > 0.02, "yes", "no") %>% factor()
+y_hat5 <- ifelse(p_hat > 0.07, "yes", "no") %>% factor()
+y_hat6 <- ifelse(p_hat > 0.12, "yes", "no") %>% factor()
+y_hat7 <- ifelse(p_hat > 0.17, "yes", "no") %>% factor()
+y_hat8 <- ifelse(p_hat > 0.22, "yes", "no") %>% factor()
+y_hat9 <- ifelse(p_hat > 0.27, "yes", "no") %>% factor()
+y_hat10 <- ifelse(p_hat > 0.32, "yes", "no") %>% factor()
+y_hat11 <- ifelse(p_hat > 0.37, "yes", "no") %>% factor()
+
+#make a table of the accuracies
+Accuracies<-rbind(confusionMatrix(y_hat1, test_cases$Hospitalized.for.COVID)$overall["Accuracy"],confusionMatrix(y_hat2, test_cases$Hospitalized.for.COVID)$overall["Accuracy"],confusionMatrix(y_hat3, test_cases$Hospitalized.for.COVID)$overall["Accuracy"],confusionMatrix(y_hat4, test_cases$Hospitalized.for.COVID)$overall["Accuracy"],confusionMatrix(y_hat5, test_cases$Hospitalized.for.COVID)$overall["Accuracy"],confusionMatrix(y_hat6, test_cases$Hospitalized.for.COVID)$overall["Accuracy"],confusionMatrix(y_hat7, test_cases$Hospitalized.for.COVID)$overall["Accuracy"],confusionMatrix(y_hat8, test_cases$Hospitalized.for.COVID)$overall["Accuracy"],confusionMatrix(y_hat9, test_cases$Hospitalized.for.COVID)$overall["Accuracy"],confusionMatrix(y_hat10, test_cases$Hospitalized.for.COVID)$overall["Accuracy"],confusionMatrix(y_hat11, test_cases$Hospitalized.for.COVID)$overall["Accuracy"])
+
+```
+```{r}
+cbind(cutoff, Accuracies)     
+```
+This was the model for the linear regression model. 
+```{r, echo=FALSE}
+summary(lm_fit)
+```
+
+```{r, echo=FALSE}
+#clean up data space
+rm(y_hat1)                  
+rm(y_hat2)   
+rm(y_hat3)
+rm(y_hat4)
+rm(y_hat5)
+rm(y_hat6)
+rm(y_hat7)
+rm(y_hat8)
+rm(y_hat9)
+rm(y_hat10)
+rm(y_hat11)
+```
+
+### Model 2
+The second model to be used was logistic regression. This method was chosen because the outcome variable was categorical and binary. Similar to the prior model, it was fitted on the training set and the model was used to predict using the test set. Cutoffs for determining accuracy were between the minimum predictive value (0) and the maximum predictive value (0.9) in increments of 0.1.
+
+
+```{r}
+glm_fit <- train_cases %>% 
+  mutate(y = as.numeric(Hospitalized.for.COVID == "yes")) %>%
+  glm(y ~ Age+Gender+Race+DayNumber, data=., family = "binomial")
+p_hat_logit <- predict(glm_fit, newdata = test_cases, type = "response")
+y_hat_logit <- ifelse(p_hat_logit > 0.37, "yes", "no") %>% factor
+confusionMatrix(y_hat_logit, test_cases$Hospitalized.for.COVID)$overall[["Accuracy"]]
+
+p_hat_logit[which.min(p_hat_logit)]
+#0.0008
+p_hat_logit[which.max(p_hat_logit)]
+#0.89
+
+cutoff_logit<-seq(0, 0.9, .1)
+```
+
+```{r, echo=FALSE}
+y_hat_logit1 <- ifelse(p_hat_logit > 0, "yes", "no") %>% factor()
+y_hat_logit2 <- ifelse(p_hat_logit > 0.1, "yes", "no") %>% factor()
+y_hat_logit3 <- ifelse(p_hat_logit > 0.2, "yes", "no") %>% factor()
+y_hat_logit4 <- ifelse(p_hat_logit > 0.3, "yes", "no") %>% factor()
+y_hat_logit5 <- ifelse(p_hat_logit > 0.4, "yes", "no") %>% factor()
+y_hat_logit6 <- ifelse(p_hat_logit > 0.5, "yes", "no") %>% factor()
+y_hat_logit7 <- ifelse(p_hat_logit > 0.6, "yes", "no") %>% factor()
+y_hat_logit8 <- ifelse(p_hat_logit > 0.7, "yes", "no") %>% factor()
+y_hat_logit9 <- ifelse(p_hat_logit > 0.8, "yes", "no") %>% factor()
+y_hat_logit10 <- ifelse(p_hat_logit > 0.9, "yes", "no") %>% factor()
+
+#make a table of the accuracies
+Accuracies_logit<-rbind(confusionMatrix(y_hat_logit1, test_cases$Hospitalized.for.COVID)$overall["Accuracy"],confusionMatrix(y_hat_logit2, test_cases$Hospitalized.for.COVID)$overall["Accuracy"],confusionMatrix(y_hat_logit3, test_cases$Hospitalized.for.COVID)$overall["Accuracy"],confusionMatrix(y_hat_logit4, test_cases$Hospitalized.for.COVID)$overall["Accuracy"],confusionMatrix(y_hat_logit5, test_cases$Hospitalized.for.COVID)$overall["Accuracy"],confusionMatrix(y_hat_logit6, test_cases$Hospitalized.for.COVID)$overall["Accuracy"],confusionMatrix(y_hat_logit7, test_cases$Hospitalized.for.COVID)$overall["Accuracy"],confusionMatrix(y_hat_logit8, test_cases$Hospitalized.for.COVID)$overall["Accuracy"],confusionMatrix(y_hat_logit9, test_cases$Hospitalized.for.COVID)$overall["Accuracy"])         
+
+rm(y_hat_logit1)                  
+rm(y_hat_logit2)   
+rm(y_hat_logit3)
+rm(y_hat_logit4)
+rm(y_hat_logit5)
+rm(y_hat_logit6)
+rm(y_hat_logit7)
+rm(y_hat_logit8)
+rm(y_hat_logit9)
+```
+After testing each cutoff, the one with the best accuracy was 0.7 with an accuracy of 0.9375. 
+
+```{r}
+cbind(cutoff_logit, Accuracies_logit)
+```
+This was the model for the logistic regression model. 
+```{r, echo=FALSE}
+summary(glm_fit)
+```
+
+For better interpretability, the logistic regression model predictor coefficents were converted to an odds ratio. 
+```{r}
+or_glm(data=train_cases, 
+       model = glm_fit, 
+       incr = list(DayNumber=7, Age=10))
+```
+
+# Results
+
+COVID19 cases in this geography started out slowly, but increased greatly between days 90-140 (mid-June to the end of July). Case counts since then have decreased and appear to be leveling off. The data file includes cases through day 173, 09/03/2020. Descriptive analysis of COVID19 cases showed differences in demographics between all cases and those that have been hospitalized. There are more cases among young adults, but hospitalizations occur more among older adults. And there are more females among cases, but more males among hospitalizations. 
+
+```{r, echo=FALSE}
+caselist%>%
+  ggplot(aes(Age, color=Hospitalized.for.COVID))+
+  geom_bar()
+caselist%>%
+  filter(!is.na(Gender))%>%
+  ggplot(aes(Gender, color=Hospitalized.for.COVID))+
+  geom_bar()
+```
+
+Two models were used to determine which would best predict cases that would be hospitalized. Demographic factors of age, gender, race, and the temporal factor of day number of outbreak were used in the predictive models. Both models ended up with the same accuracy of 0.9375. However, the logistic regression model ended up with more factors that were significant. 
+
+Age was very significant. For every change of 10 years and adjusting for all other factors the odds ratio was 1.88. This means that for each increase in age, the likelihood of being hospitalized with COVID19 increased 88%. 
+
+Compared to Whites and adjusting for all other factors:
+
+*   American Indians/Alaska Natives had an odds ratio of 3.01
+*   Blacks had an odds ratio of 3.56
+*   Hispanics/LatinX had an odds ratio of 2.12
+*   Native Hawaiian/Other Pacific Islander had an odds ratio of 3.08.
+
+This means that compared to whites, these races were 2-3.5 times more likely to be hospitalized with COVID19. 
+
+Alternatively, unknown race had an odds ratio of 0.43. This means that cases with an unknown race were more than two time less likely to be hospitalized with COVID19. This may be a reflection of data entry completion in that those cases that are hospitalized may have more investigation time committed to them and may have more complete data in the case file. 
+
+The day number had an odds ratio of 0.949 for every change in 7 days and adjusting for all other factors. This means that as time of the outbreak continued, there was a small decrease in the likelihood of a case being hospitalized. 
+
+Gender, Asian race, and multi-racial were not significant predictive variables in the logistic regression model. 
+
+# Conclusion
+
+A small proportion of COVID19 cases end up being hospitalized. But older adults and most non-White race groups are at an increased risk for progressing to the point of needing hospitalization care if they contract COVID19. It may be that older adults are more medically fragile than younger adults due to co-morbidities. Differences by race may also be because of differences in health status between racial groups. But it may also be because of differences in behavior, such as where they live or what their occupation is. 
+
+For the purpose of the capstone project, these data were sufficient. The logistic regression model better fit the data for predicting hospitalization among COVID19 cases. A limitation of the analysis is that some identifiers were removed prior to use that may have been useful in the predictive model, such as geographic location and exposure risks. Further analysis with COVID19 case data that is not being made publicly available may find a better fitting model or may find additional or different predictive variables. At a minimum, these finding support the discussion in the community that older adults and people of color are disproportionately affected by COVID19. 
